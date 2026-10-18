@@ -1,5 +1,46 @@
 use super::*;
 
+#[test]
+fn headless_byte_export_roundtrips_layers_without_marking_saved() {
+    let mut s = session(7, 5, 16);
+    s.execute("layer.new.layer", json!({"name": "Overlay"})).unwrap();
+    let before = s.active().unwrap().clone();
+    let encoded = export_active_bytes(&s, "download.pcraft", &json!({})).unwrap();
+    let imported = photocraft_io::import("download.pcraft", &encoded.bytes).unwrap().document;
+    assert_eq!(imported.size, before.doc.size);
+    assert_eq!(imported.pixel_format(), before.doc.pixel_format());
+    assert_eq!(imported.layers.len(), before.doc.layers.len());
+    let after = s.active().unwrap();
+    assert_eq!(after.path, before.path);
+    assert_eq!(after.revision, before.revision);
+    assert_eq!(after.saved_revision, before.saved_revision);
+    assert_eq!(after.is_dirty(), before.is_dirty());
+    assert!(Arc::ptr_eq(&after.doc, &before.doc));
+}
+
+#[test]
+fn headless_byte_export_validates_params_and_requires_document() {
+    assert!(matches!(export_active_bytes(&Session::new(), "x.png", &json!({})), Err(EngineError::NoDocument)));
+    let s = session(2, 3, 8);
+    assert!(matches!(export_active_bytes(&s, "x.tga", &json!({"tgaBits": 7})), Err(EngineError::BadParams { .. })));
+    assert!(export_active_bytes(&s, "x.unknown", &json!({})).is_err());
+    let png = export_active_bytes(&s, "x.png", &json!({})).unwrap();
+    assert!(png.bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    let imported = photocraft_io::import("x.png", &png.bytes).unwrap().document;
+    assert_eq!(imported.size.width, 2);
+    assert_eq!(imported.size.height, 3);
+}
+
+#[test]
+fn headless_byte_export_restores_outer_document_scope_on_error() {
+    let outer = std::path::Path::new("outer.pcraft");
+    let _scope = crate::doc_path::scope(Some(outer));
+    let mut s = session(1, 1, 8);
+    s.active_mut().unwrap().path = Some("active.pcraft".into());
+    assert!(export_active_bytes(&s, "x.unknown", &json!({})).is_err());
+    assert_eq!(crate::doc_path::current().as_deref(), Some(outer));
+}
+
 fn tmp(name: &str) -> String {
     let d = std::env::temp_dir().join(format!("photocraft-file-cmds-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);

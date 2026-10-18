@@ -6,7 +6,7 @@
 //!
 //! Commands that touch the file system take explicit paths (the UI asks for them with its own
 //! pickers) and are unavailable on the web, where there is no file system; their byte-level
-//! cores ([`place_bytes`], [`open_bytes_as`]) work everywhere.
+//! cores ([`place_bytes`], [`open_bytes_as`], [`export_active_bytes`]) work everywhere.
 
 use std::sync::Arc;
 
@@ -396,6 +396,23 @@ pub(crate) fn save_doc(doc: &Document, path: &str, save: impl Into<SaveOpts>) ->
     let (bytes, warnings) = encode(doc, path, save)?;
     write_file(path, &bytes)?;
     Ok(warnings)
+}
+
+/// Encode the active document for a host-managed download or byte stream.
+///
+/// `name` selects the format exactly as in Save As; it is never written to disk.
+/// `params` accepts the same `quality`, `tiffLayers`, `tgaBits` and `dpxBits` options
+/// as the file commands. File Handling preferences and the source file's encoding
+/// are preserved. Linked assets use the active document's path, never `name`.
+///
+/// Exporting does not rename the document, mark it saved, or change its history.
+/// A host that successfully persists the bytes can then call [`crate::DocState::saved_to`].
+pub fn export_active_bytes(s: &Session, name: &str, params: &Value) -> Result<photocraft_io::ExportResult> {
+    let active = s.active().ok_or(EngineError::NoDocument)?;
+    let options = SaveOpts::from_params(s, params, "file.saveAs")?;
+    let _document = crate::doc_path::scope(active.path.as_deref().map(std::path::Path::new));
+    let (bytes, warnings) = encode(&active.doc, name, options)?;
+    Ok(photocraft_io::ExportResult { bytes, warnings })
 }
 
 pub(crate) fn str_param<'a>(p: &'a Value, key: &str, cmd: &str) -> Result<&'a str> {
